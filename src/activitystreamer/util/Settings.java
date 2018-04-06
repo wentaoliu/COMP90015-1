@@ -10,6 +10,7 @@ import org.apache.logging.log4j.Logger;
 public class Settings {
 	private static final Logger log = LogManager.getLogger();
 	private static SecureRandom random = new SecureRandom();
+	private static String id = null;
 	private static int localPort = 3780;
 	private static String localHostname = "localhost";
 	private static String remoteHostname = null;
@@ -83,6 +84,13 @@ public class Settings {
 		Settings.localHostname = localHostname;
 	}
 
+	public static String getId() {
+		return id;
+	}
+
+	public static void setId() {
+		Settings.id = nextSecret();
+	}
 	
 	/*
 	 * some general helper functions
