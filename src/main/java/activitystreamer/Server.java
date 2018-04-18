@@ -97,8 +97,6 @@ public class Server {
 		if(cmd.hasOption("s")){
 			Settings.setSecret(cmd.getOptionValue("s"));
 		}
-
-		Settings.setId();
 		
 		log.info("starting server");
 		

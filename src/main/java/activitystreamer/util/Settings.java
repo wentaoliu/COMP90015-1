@@ -84,13 +84,6 @@ public class Settings {
 		Settings.localHostname = localHostname;
 	}
 
-	public static String getId() {
-		return id;
-	}
-
-	public static void setId() {
-		Settings.id = nextSecret();
-	}
 	
 	/*
 	 * some general helper functions
