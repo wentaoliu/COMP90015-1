@@ -24,6 +24,9 @@ public class Connection extends Thread {
 	private boolean open = false;
 	private Socket socket;
 	private boolean term=false;
+
+	private boolean authenticatedServer = false;
+	private boolean authenticatedClient = false;
 	
 	Connection(Socket socket) throws IOException{
 		in = new DataInputStream(socket.getInputStream());
@@ -32,6 +35,7 @@ public class Connection extends Thread {
 	    outwriter = new PrintWriter(out, true);
 	    this.socket = socket;
 	    open = true;
+
 	    start();
 	}
 	
@@ -85,4 +89,21 @@ public class Connection extends Thread {
 	public boolean isOpen() {
 		return open;
 	}
-}
+
+	public void authenticateSever(boolean authenticated) {
+		this.authenticatedServer = authenticated;
+	}
+
+	public boolean isAuthenticatedServer() {
+		return authenticatedServer;
+	}
+
+	public void authenticateClient(boolean authenticated) {
+		this.authenticatedClient = authenticated;
+	}
+
+	public boolean isAuthenticatedClient() {
+		return authenticatedClient;
+	}
+
+ }
