@@ -16,9 +16,9 @@ import org.json.simple.parser.ParseException;
 
 import activitystreamer.util.Settings;
 
-public class ClientSkeleton extends Thread {
+public class ClientSolution extends Thread {
 	private static final Logger log = LogManager.getLogger();
-	private static ClientSkeleton clientSolution;
+	private static ClientSolution clientSolution;
 	private TextFrame textFrame;
 
 	private Socket socket;
@@ -31,23 +31,28 @@ public class ClientSkeleton extends Thread {
 	private boolean open = false;
 
 	
-	public static ClientSkeleton getInstance(){
+	public static ClientSolution getInstance(){
 		if(clientSolution==null){
-			clientSolution = new ClientSkeleton();
+			clientSolution = new ClientSolution();
 		}
 		return clientSolution;
 	}
 	
-	public ClientSkeleton(){
-		initiateConnection();
-		
-		textFrame = new TextFrame();
-		start();
+	public ClientSolution(){
+		boolean connected = false;
+		if(Settings.getRemoteHostname() != null) {
+			if(Settings.getUsername().equals("anonymous")
+					|| Settings.getSecret()!=null) {
+				connected = initiateConnection();
+			}
+		}
+		textFrame = new TextFrame(connected);
+
 	}
 	
 	
 	
-	public void initiateConnection() {
+	public boolean initiateConnection() {
 		socket = null;
 		try{
 			socket = new Socket(Settings.getRemoteHostname(), Settings.getRemotePort());
@@ -57,23 +62,41 @@ public class ClientSkeleton extends Thread {
 			outwriter = new PrintWriter(out, true);
 
 			open = true;
-			log.debug("New Connection Established");
+			log.info("New Connection Established");
 
-			// try to login
-			JSONObject obj = new JSONObject();
-			obj.put("command", "LOGIN");
-			obj.put("username", Settings.getUsername());
-			if(!Settings.getUsername().equals("anonymous")) {
-				obj.put("secret", Settings.getSecret());
-			}
-			sendActivityObject(obj);
+			textFrame.onlineMode(true);
+			start();
+			return true;
 		} catch (IOException e){
 			log.fatal("Connection Failed:" + e.getMessage());
 			System.exit(-1);
 		}
+		return false;
 	}
-	
-	
+
+	public void login() {
+		// try to login
+		JSONObject obj = new JSONObject();
+		obj.put("command", "LOGIN");
+		obj.put("username", Settings.getUsername());
+		if(!Settings.getUsername().equals("anonymous")) {
+			obj.put("secret", Settings.getSecret());
+		}
+		sendActivityObject(obj);
+		log.debug("Sending login request");
+	}
+
+	public void register() {
+		// try to login
+		JSONObject obj = new JSONObject();
+		obj.put("command", "REGISTER");
+		obj.put("username", Settings.getUsername());
+		obj.put("secret", Settings.getSecret());
+
+		sendActivityObject(obj);
+		log.debug("Sending register request");
+	}
+
 	@SuppressWarnings("unchecked")
 	public void sendActivityObject(JSONObject activityObj){
 		if(open){
@@ -84,15 +107,23 @@ public class ClientSkeleton extends Thread {
 	
 	
 	public void disconnect(){
+		JSONObject obj = new JSONObject();
+		obj.put("command", "LOGOUT");
+		sendActivityObject(obj);
+
 		if(socket != null) try {
 			inreader.close();
 			out.close();
 			socket.close();
 			socket = null;
 			open = false;
+			term = true;
 		}catch (IOException e){
 			log.error("close:" + e.getMessage());
 		}
+
+		textFrame.setVisible(false);
+		textFrame.dispose();
 	}
 	
 	
@@ -113,8 +144,6 @@ public class ClientSkeleton extends Thread {
 	}
 
 	private boolean process(String msg) {
-		log.debug(msg);
-
 		JSONParser parser = new JSONParser();
 		JSONObject obj = null;
 		String command = null;
@@ -154,7 +183,7 @@ public class ClientSkeleton extends Thread {
 			case "REGISTER_FAILED":
 				break;
 			case "ACTIVITY_BROADCAST":
-				log.debug(obj);
+				log.debug("activity: " + obj);
 				textFrame.setOutputText(obj);
 				return false;
 			default:

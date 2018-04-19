@@ -288,9 +288,17 @@ public class Control extends Thread {
 				if (!validateServerConnection(con)) return true;
 
 				username = (String) reqObj.get("username");
+				secret = (String) reqObj.get("secret");
 
+				// if the username is still in pending status
 				if (pendingRequests.containsKey(username)) {
 					pendingRequests.put(username, pendingRequests.get(username) - 1);
+
+					// save this user to this server
+					if(checkUsernameAvailability(username)) {
+						registeredUsers.add(new UserInfo(username, secret));
+					}
+
 					// if all the server responded with lock_allowed
 					if (pendingRequests.get(username) <= 0) {
 						pendingRequests.remove(username);
@@ -299,15 +307,19 @@ public class Control extends Thread {
 							resObj.put("command", "REGISTER_SUCCESS");
 							resObj.put("info", "register success for " + username);
 
+							validatedClientConnections.add(registerRequestSources.get(username));
+
 							registerRequestSources.get(username).writeMsg(resObj.toJSONString());
 							registerRequestSources.remove(username);
 
 							log.info(username + " registered successfully");
-						} else {
-							// if not, send back to the source server
-							lockRequestSources.get(username).writeMsg(reqObj.toJSONString());
 						}
+					}
 
+					if(lockRequestSources.containsKey(username)) {
+						// if it is requested by a server,
+						// send back to the server
+						lockRequestSources.get(username).writeMsg(reqObj.toJSONString());
 					}
 				}
 				return false;
@@ -415,15 +427,32 @@ public class Control extends Thread {
 				username = (String) reqObj.get("username");
 				secret = (String) reqObj.get("secret");
 
+				// if the username is available on this server
 				if (checkUsernameAvailability(username)) {
-					resObj.put("command", "LOCK_REQUEST");
-					resObj.put("username", username);
-					reqObj.put("secret", secret);
+					if(allKnownServers.size() > 0) {
+						// if there are other servers in this network,
+						// we have to check other servers for this username
+						resObj.put("command", "LOCK_REQUEST");
+						resObj.put("username", username);
+						reqObj.put("secret", secret);
 
-					broadcastMessage(validatedServerConnections, con, resObj);
-					pendingRequests.put(username, allKnownServers.size());
-					registerRequestSources.put(username, con);
-					return false;
+						broadcastMessage(validatedServerConnections, con, resObj);
+						pendingRequests.put(username, allKnownServers.size());
+						registerRequestSources.put(username, con);
+
+						log.info("sending out lock requests");
+						return false;
+					} else {
+						resObj.put("command", "REGISTER_SUCCESS");
+						resObj.put("info", "register success for " + username);
+
+						registeredUsers.add(new UserInfo(username, secret));
+
+						validatedClientConnections.add(con);
+
+						log.info(username + " registered successfully");
+						return false;
+					}
 				} else { // if the username is taken
 					resObj.put("command", "REGISTER_FAILED");
 					resObj.put("info", username + " is already registered with the system");

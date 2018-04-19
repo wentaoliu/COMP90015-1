@@ -9,7 +9,7 @@ import org.apache.commons.cli.ParseException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import activitystreamer.client.ClientSkeleton;
+import activitystreamer.client.ClientSolution;
 import activitystreamer.util.Settings;
 
 public class Client {
@@ -74,7 +74,7 @@ public class Client {
 		
 		
 			
-		ClientSkeleton c = ClientSkeleton.getInstance(); 
+		ClientSolution c = ClientSolution.getInstance();
 				
 			
 		
