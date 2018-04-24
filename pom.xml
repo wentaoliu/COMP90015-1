@@ -55,23 +55,42 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
                 <version>3.1.0</version>
-                <configuration>
-                    <!-- get all project dependencies -->
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                    <!-- MainClass in mainfest make a executable jar -->
-                    <archive>
-                        <manifest>
-                            <mainClass>activitystreamer.Client</mainClass>
-                        </manifest>
-                    </archive>
 
-                </configuration>
                 <executions>
                     <execution>
-                        <id>make-assembly</id>
-                        <!-- bind to the packaging phase -->
+                        <id>activitystreamer-server</id>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>activitystreamer.Server</mainClass>
+                                </manifest>
+                            </archive>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+                            <finalName>ActivityStreamerServer</finalName>
+                            <appendAssemblyId>false</appendAssemblyId>
+                        </configuration>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+
+                    <execution>
+                        <id>activitystreamer-client</id>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>activitystreamer.Client</mainClass>
+                                </manifest>
+                            </archive>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+                            <finalName>ActivityStreamerClient</finalName>
+                            <appendAssemblyId>false</appendAssemblyId>
+                        </configuration>
                         <phase>package</phase>
                         <goals>
                             <goal>single</goal>
