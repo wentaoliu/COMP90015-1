@@ -28,8 +28,6 @@ public class ClientSolution extends Thread {
 	private PrintWriter outwriter;
 
 	private boolean term = false;
-	private boolean open = false;
-
 	
 	public static ClientSolution getInstance(){
 		if(clientSolution==null){
@@ -39,11 +37,32 @@ public class ClientSolution extends Thread {
 	}
 	
 	public ClientSolution(){
-		initiateConnection();
+		try{
+			socket = new Socket(Settings.getRemoteHostname(), Settings.getRemotePort());
+			in = new DataInputStream(socket.getInputStream());
+			out = new DataOutputStream(socket.getOutputStream());
+			inreader = new BufferedReader(new InputStreamReader(in));
+			outwriter = new PrintWriter(out, true);
 
-		if(Settings.getUsername().equals("anonymous")
-			|| (!Settings.getUsername().equals("anonymous")
-				&& Settings.getSecret() != null)) {
+			log.info("New Connection Established");
+
+			// Try to login or register
+			initiate();
+		} catch (IOException e){
+			log.fatal("Connection Failed:" + e.getMessage());
+			System.exit(-1);
+		}
+
+		textFrame = new TextFrame();
+		start();
+	}
+	
+	
+	// Try to login or register
+	private void initiate() {
+		if(Settings.getUsername().equals("anonymous") ||
+				(!Settings.getUsername().equals("anonymous")
+					&& Settings.getSecret() != null)) {
 			// If the username hasn't been assigned by the command line argument,
 			// OR
 			// If both the username and secret have been assigned,
@@ -56,33 +75,10 @@ public class ClientSolution extends Thread {
 			Settings.setSecret(Settings.nextSecret());
 			register();
 		}
-
-		textFrame = new TextFrame();
-		start();
-	}
-	
-	
-	
-	public void initiateConnection() {
-		socket = null;
-		try{
-			socket = new Socket(Settings.getRemoteHostname(), Settings.getRemotePort());
-			in = new DataInputStream(socket.getInputStream());
-			out = new DataOutputStream(socket.getOutputStream());
-			inreader = new BufferedReader(new InputStreamReader(in));
-			outwriter = new PrintWriter(out, true);
-
-			open = true;
-			log.info("New Connection Established");
-
-
-		} catch (IOException e){
-			log.fatal("Connection Failed:" + e.getMessage());
-			System.exit(-1);
-		}
 	}
 
-	public void login() {
+	// send login request
+	private void login() {
 		// try to login
 		JSONObject obj = new JSONObject();
 		obj.put("command", "LOGIN");
@@ -94,7 +90,8 @@ public class ClientSolution extends Thread {
 		log.debug("Try to login in as: " + Settings.getUsername());
 	}
 
-	public void register() {
+	// send register request
+	private void register() {
 		// try to login
 		JSONObject obj = new JSONObject();
 		obj.put("command", "REGISTER");
@@ -108,13 +105,12 @@ public class ClientSolution extends Thread {
 
 	@SuppressWarnings("unchecked")
 	public void sendActivityObject(JSONObject activityObj){
-		if(open){
-			outwriter.println(activityObj);
-			outwriter.flush();
-		}
+		outwriter.println(activityObj);
+		outwriter.flush();
 	}
 	
-	
+	// disconnect current connection
+	// send logout command
 	public void disconnect(){
 		JSONObject obj = new JSONObject();
 		obj.put("command", "LOGOUT");
@@ -125,7 +121,6 @@ public class ClientSolution extends Thread {
 			out.close();
 			socket.close();
 			socket = null;
-			open = false;
 		}catch (IOException e){
 			log.error("close:" + e.getMessage());
 		}
@@ -138,7 +133,9 @@ public class ClientSolution extends Thread {
 	public void run(){
 		try {
 			String data;
-			while(!term && (data = inreader.readLine())!=null){
+			while(!term){
+				data = inreader.readLine();
+				if(data==null) continue;
 				term = process(data);
 			}
 			log.debug("connection closed to "+Settings.socketAddress(socket));
@@ -147,10 +144,13 @@ public class ClientSolution extends Thread {
 		} catch (IOException e) {
 			log.error("connection "+Settings.socketAddress(socket)+" closed with exception: "+e);
 			disconnect();
-			}
-		open=false;
+		}
 	}
 
+	/*
+	 * Processing incoming messages from the connection.
+	 * Return true if the connection should close.
+	 */
 	private boolean process(String msg) {
 		JSONParser parser = new JSONParser();
 		JSONObject obj;
@@ -168,41 +168,60 @@ public class ClientSolution extends Thread {
 
 		switch (command) {
 			case "REDIRECT":
-				disconnect();
-				log.debug("Current connection is closing...redirecting to a new server");
+				log.info("Current connection is closing.");
 
 				try {
 					String hostname = (String) obj.get("hostname");
-					Integer port = (Integer) obj.get("port");
+					Integer port = ((Number) obj.get("port")).intValue();
 
+					// update the hostname and port number
 					Settings.setRemoteHostname(hostname);
 					Settings.setRemotePort(port);
+
+					// close current connection
+					socket.close();
+					// connect to the new server
+					socket = new Socket(Settings.getRemoteHostname(), Settings.getRemotePort());
+					in = new DataInputStream(socket.getInputStream());
+					inreader = new BufferedReader(new InputStreamReader(in));
+					out = new DataOutputStream(socket.getOutputStream());
+					outwriter = new PrintWriter(out, true);
+
+					log.info("Redirect to another server");
+					// try to login
+					login();
 				} catch (Exception e) {
-					break;
+					log.error("Error occurred in redirection: " + e);
+					return true;
 				}
 
-				initiateConnection();
-				if(open) return false;
-				break;
-			case "LOGIN_SUCCESS":
-				log.debug("login success");
 				return false;
+
+			case "LOGIN_SUCCESS":
+				log.info("login success");
+				return false;
+
 			case "LOGIN_FAILED":
 				log.error("login failed");
 				break;
+
 			case "INVALID_MESSAGE":
 				log.error("Invalid message!");
 				break;
+
 			case "REGISTER_SUCCESS":
 				log.info("Register success! Please remember your secret: " + Settings.getSecret());
 				return false;
+
 			case "REGISTER_FAILED":
 				log.error("Register failed!");
 				break;
+
 			case "ACTIVITY_BROADCAST":
 				log.debug("activity: " + obj);
 				textFrame.setOutputText(obj);
 				return false;
+
 			default:
 				break;
 		}

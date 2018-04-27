@@ -50,7 +50,6 @@ public class Connection extends Thread {
 	
 	public void closeCon(){
 		if(open){
-			log.info("closing connection "+Settings.socketAddress(socket));
 			try {
 				term=true;
 				inreader.close();
@@ -69,7 +68,7 @@ public class Connection extends Thread {
 			while(!term && (data = inreader.readLine())!=null){
 				term=Control.getInstance().process(this,data);
 			}
-			log.debug("connection closed to "+Settings.socketAddress(socket));
+			log.info("connection closed to "+Settings.socketAddress(socket));
 			Control.getInstance().connectionClosed(this);
 			in.close();
 		} catch (IOException e) {

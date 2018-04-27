@@ -19,6 +19,7 @@ public class Control extends Thread {
 
 	// Represents servers in the same network,
 	// directly or indirectly connected to this server.
+	// Those data are obtained by receiving announcements from other servers.
 	private class ServerInfo {
 
 		private String id;
@@ -33,10 +34,11 @@ public class Control extends Thread {
 			this.load = load;
 		}
 
+		// Server id is used to identify each server.
+		// It is immutable.
 		public String getServerId() {
 			return id;
 		}
-
 
 		public String getHostname() {
 			return hostname;
@@ -63,7 +65,9 @@ public class Control extends Thread {
 		}
 	}
 
-	// Represents users connected to this server
+	// Represents users registered in this network.
+	// Not necessarily registers through this server.
+	// May obtained by receiving lock requests from other servers
 	private class UserInfo {
 		private String username;
 		private String secret;
@@ -108,8 +112,6 @@ public class Control extends Thread {
 	// For register workflow:
 	// username & source client connection
 	private static Map<String, Connection> registerRequestSources =  new HashMap<>();
-	// username & source server connection
-	private static Map<String, Connection> lockRequestSources = new HashMap<>();
 	// username & number of servers waiting for response
 	private static Map<String, Integer> pendingRequests  = new HashMap<>();
 
@@ -123,6 +125,7 @@ public class Control extends Thread {
 		return control;
 	}
 
+	// Constructor
 	private Control() {
 		// start a listener
 		try {
@@ -141,27 +144,38 @@ public class Control extends Thread {
 		initiateConnection();
 		start();
 	}
-	
+
+
+	// If a remote server is specified,
+	// try to make a new connection to it and require authentication.
 	public void initiateConnection(){
 		// make a connection to another server if remote hostname is supplied
 		if(Settings.getRemoteHostname()!=null){
 			try {
-				Connection c = outgoingConnection(new Socket(Settings.getRemoteHostname(),Settings.getRemotePort()));
+				Connection c = outgoingConnection(
+						new Socket(Settings.getRemoteHostname(),
+								Settings.getRemotePort()));
 
+				// Send an authentication message
 				JSONObject obj = new JSONObject();
 				obj.put("command", "AUTHENTICATE");
 				obj.put("secret", Settings.getSecret());
 				c.writeMsg(obj.toJSONString());
+				// The parent server certainly is a valid server.
 				validatedServerConnections.add(c);
 
 				log.info("Sending authentication request");
 			} catch (IOException e) {
-				log.error("failed to make connection to "+Settings.getRemoteHostname()+":"+Settings.getRemotePort()+" :"+e);
+				log.error("failed to make connection to "
+						+ Settings.getRemoteHostname() + ":"
+						+ Settings.getRemotePort());
+				// If the initial connection couldn't be established,
+				// just quit the program.
 				System.exit(-1);
 			}
 		}
 	}
-	
+
 	/*
 	 * Processing incoming messages from the connection.
 	 * Return true if the connection should close.
@@ -173,6 +187,7 @@ public class Control extends Thread {
 		JSONObject resObj = new JSONObject();
 
 		try {
+			// try to un-marshal the json message
 			reqObj = (JSONObject) parser.parse(msg);
 		} catch (ParseException e1) {
 			responseToInvalidMessage(con, "JSON parse error while parsing message");
@@ -192,10 +207,14 @@ public class Control extends Thread {
 		String username, secret;
 
 
+		// Make responses according to the command type.
 		switch (command) {
 
-			// For validated server connections, following commands are acceptable:
-			// AUTHENTICATION_FAIL, SERVER_ANNOUNCE, ACTIVITY_BROADCAST, LOCK_REQUEST, LOCK_ALLOW, LOCK_DENY
+			// For validated server connections,
+			// following (6) commands are acceptable:
+			//
+			// AUTHENTICATION_FAIL, SERVER_ANNOUNCE, ACTIVITY_BROADCAST,
+			// LOCK_REQUEST, LOCK_ALLOW, LOCK_DENY
 
 			case "AUTHENTICATION_FAIL":
 				if (!validateServerConnection(con)) return true;
@@ -212,6 +231,8 @@ public class Control extends Thread {
 				int rServerPort = ((Number) reqObj.get("port")).intValue();
 
 				boolean existed = false;
+				// traverse all the known servers
+				// to see if we have already known this server
 				for (ServerInfo s : allKnownServers) {
 					if (s.getServerId().equals(rServerId)) {
 						existed = true;
@@ -220,17 +241,22 @@ public class Control extends Thread {
 						s.setLoad(rServerLoad);
 					}
 				}
+				// if not, create a new entry to store the info
 				if (!existed) {
 					allKnownServers.add(new ServerInfo(rServerId, rServerHostname, rServerPort, rServerLoad));
 				}
 
 				log.info("Server announcement from " + rServerId + "(" + rServerHostname + ":"
 						+ rServerPort + "), " + rServerLoad + " connected client(s)");
+
+				// broadcast to all other servers
+				broadcastMessage(validatedServerConnections, con, reqObj);
 				return false;
 
 			case "ACTIVITY_BROADCAST":
 				if (!validateServerConnection(con)) return true;
 
+				// Broadcast to both the servers and the clients
 				broadcastMessage(validatedServerConnections, con, reqObj);
 				broadcastMessage(validatedClientConnections, con, reqObj);
 				return false;
@@ -239,18 +265,37 @@ public class Control extends Thread {
 				if (!validateServerConnection(con)) return true;
 
 				username = (String) reqObj.get("username");
+				secret = (String) reqObj.get("secret");
+
+				// If the username is already known to this server,
+				// broadcast lock_denied to all other servers.
 				if (!checkUsernameAvailability(username)) {
 					resObj.put("command", "LOCK_DENIED");
-					resObj.put("info", username + " is already registered with the system");
+					resObj.put("username", username);
+					resObj.put("secret", secret);
 
-					con.writeMsg(resObj.toJSONString());
+					// Broadcast lock_denied
+					broadcastMessage(validatedServerConnections, null, resObj);
+
 					log.error("this username is registered in this server");
-					return false;
-				}
+				} else {
+					// If the username is not already known to this server,
+					// record this username and password,
+					// broadcast lock_allowed to all other servers.
+					// Pass the request to other servers
 
-				broadcastMessage(validatedServerConnections, con, resObj);
-				lockRequestSources.put(username, con);
-				pendingRequests.put(username, allKnownServers.size());
+					resObj.put("command", "LOCK_ALLOWED");
+					resObj.put("username", username);
+					resObj.put("secret", secret);
+					// Broadcast lock_allowed
+					broadcastMessage(validatedServerConnections, null, resObj);
+					// pass the original lock_request to other servers
+					broadcastMessage(validatedServerConnections, con, reqObj);
+					// Save this username and secret to local storage.
+					registeredUsers.add(new UserInfo(username, secret));
+
+					log.info("lock allowed");
+				}
 				return false;
 
 			case "LOCK_DENIED":
@@ -258,29 +303,26 @@ public class Control extends Thread {
 
 				username = (String) reqObj.get("username");
 
-				if (pendingRequests.containsKey(username)) {
-					pendingRequests.remove(username);
-					// if the register request is from a client of this server
-					// return register failed
-					if (registerRequestSources.containsKey(username)) {
-						resObj.put("command", "REGISTER_FAILED");
-						resObj.put("info", username + " is already registered with the system");
-
-						registerRequestSources.get(username).writeMsg(resObj.toJSONString());
-						log.error("this username is registered in this server");
-
-						registerRequestSources.remove(username);
-						return false;
-					} else {
-						// if not, send back to the source server
-						lockRequestSources.get(username).writeMsg(reqObj.toJSONString());
-					}
-
-				}
-
 				// If the username has been registered on this server,
 				// then remove local username and secret
 				registeredUsers.removeIf(user -> user.getUsername().equals(username));
+
+				// If the username is registered by a client of this server,
+				// and now we need to refuse its register request
+				if (registerRequestSources.containsKey(username)) {
+					resObj.put("command", "REGISTER_FAILED");
+					resObj.put("info", username + " is already registered with the system");
+
+					registerRequestSources.get(username).writeMsg(resObj.toJSONString());
+					log.error("this username is registered in this server");
+
+					registerRequestSources.remove(username);
+					return true;
+				}
+
+				// If it is not registered by a client of this server,
+				// just broadcast to other servers
+				broadcastMessage(validatedServerConnections, con, reqObj);
 
 				return false;
 
@@ -288,40 +330,29 @@ public class Control extends Thread {
 				if (!validateServerConnection(con)) return true;
 
 				username = (String) reqObj.get("username");
-				secret = (String) reqObj.get("secret");
 
-				// if the username is still in pending status
+				// If the username is registered by a client of this server
 				if (pendingRequests.containsKey(username)) {
 					pendingRequests.put(username, pendingRequests.get(username) - 1);
 
-					// save this user to this server
-					if(checkUsernameAvailability(username)) {
-						registeredUsers.add(new UserInfo(username, secret));
-					}
-
-					// if all the server responded with lock_allowed
+					// if all the server responded with a lock_allowed
 					if (pendingRequests.get(username) <= 0) {
 						pendingRequests.remove(username);
-						// if the register request is from a client of this server
-						if (registerRequestSources.containsKey(username)) {
-							resObj.put("command", "REGISTER_SUCCESS");
-							resObj.put("info", "register success for " + username);
 
-							validatedClientConnections.add(registerRequestSources.get(username));
+						resObj.put("command", "REGISTER_SUCCESS");
+						resObj.put("info", "register success for " + username);
 
-							registerRequestSources.get(username).writeMsg(resObj.toJSONString());
-							registerRequestSources.remove(username);
+						validatedClientConnections.add(registerRequestSources.get(username));
 
-							log.info(username + " registered successfully");
-						}
+						registerRequestSources.get(username).writeMsg(resObj.toJSONString());
+						registerRequestSources.remove(username);
+
+						log.info(username + " registered successfully");
 					}
-
-					if(lockRequestSources.containsKey(username)) {
-						// if it is requested by a server,
-						// send back to the server
-						lockRequestSources.get(username).writeMsg(reqObj.toJSONString());
-					}
+				} else {
+					broadcastMessage(validatedServerConnections, con, reqObj);
 				}
+
 				return false;
 
 
@@ -341,9 +372,11 @@ public class Control extends Thread {
 					return true;
 				}
 
+				// Extract the activity object from the original message.
 				JSONObject activity = (JSONObject) reqObj.get("activity");
 				resObj.put("command", "ACTIVITY_BROADCAST");
 				resObj.put("activity", activity);
+				// Send to the other clients and servers
 				broadcastMessage(validatedServerConnections, con, resObj);
 				broadcastMessage(validatedClientConnections, null, resObj);
 
@@ -351,7 +384,7 @@ public class Control extends Thread {
 				return false;
 
 			case "LOGOUT":
-				// if(!validateClientConnection(con)) return true;
+				if(!validateClientConnection(con)) return true;
 				// just close the connection
 				return true;
 
@@ -429,6 +462,9 @@ public class Control extends Thread {
 
 				// if the username is available on this server
 				if (checkUsernameAvailability(username)) {
+					// Temporarily store this username and secret to local storage
+					registeredUsers.add(new UserInfo(username, secret));
+
 					if(allKnownServers.size() > 0) {
 						// if there are other servers in this network,
 						// we have to check other servers for this username
@@ -436,8 +472,11 @@ public class Control extends Thread {
 						resObj.put("username", username);
 						reqObj.put("secret", secret);
 
+						// broadcast lock_request to all other servers
 						broadcastMessage(validatedServerConnections, con, resObj);
+						// store the number of known servers in this network
 						pendingRequests.put(username, allKnownServers.size());
+						// store which client registers this username
 						registerRequestSources.put(username, con);
 
 						log.info("sending out lock requests");
@@ -445,8 +484,6 @@ public class Control extends Thread {
 					} else {
 						resObj.put("command", "REGISTER_SUCCESS");
 						resObj.put("info", "register success for " + username);
-
-						registeredUsers.add(new UserInfo(username, secret));
 
 						validatedClientConnections.add(con);
 
@@ -544,6 +581,7 @@ public class Control extends Thread {
 		term=t;
 	}
 
+	// check whether the provided username and secret are correct
 	private boolean validateUser(JSONObject obj) {
 		if(!obj.containsKey("username")) {
 			return false;
@@ -566,10 +604,12 @@ public class Control extends Thread {
 		return false;
 	}
 
+	// Check if the current connection is a valid client connection.
 	private boolean validateClientConnection(Connection con) {
 		return validatedClientConnections.contains(con);
 	}
 
+	// Check if the current connection is a valid server connection.
 	private boolean validateServerConnection(Connection con) {
 		if(validatedServerConnections.contains(con)) {
 			return true;
@@ -582,6 +622,7 @@ public class Control extends Thread {
 		}
 	}
 
+	// Check if the username is already known on this server
 	private boolean checkUsernameAvailability(String username) {
 		for(UserInfo user : registeredUsers) {
 			if(user.getUsername().equals(username)) return false;
@@ -589,6 +630,7 @@ public class Control extends Thread {
 		return true;
 	}
 
+	// Respond with a invalid_message command
 	private void responseToInvalidMessage(Connection con, String msg) {
 		JSONObject obj = new JSONObject();
 		obj.put("command", "INVALID_MESSAGE");
