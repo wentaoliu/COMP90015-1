@@ -86,7 +86,7 @@ public class ClientSolution extends Thread {
 		if(!Settings.getUsername().equals("anonymous")) {
 			obj.put("secret", Settings.getSecret());
 		}
-		sendActivityObject(obj);
+		writeJSON(obj);
 		log.debug("Try to login in as: " + Settings.getUsername());
 	}
 
@@ -98,14 +98,27 @@ public class ClientSolution extends Thread {
 		obj.put("username", Settings.getUsername());
 		obj.put("secret", Settings.getSecret());
 
-		sendActivityObject(obj);
+		writeJSON(obj);
 		log.info("Registering username: " + Settings.getUsername()
 				+ " with secret: " + Settings.getSecret());
 	}
 
 	@SuppressWarnings("unchecked")
 	public void sendActivityObject(JSONObject activityObj){
-		outwriter.println(activityObj);
+		// build the JSON message object
+		JSONObject obj = new JSONObject();
+		obj.put("command", "ACTIVITY_MESSAGE");
+		obj.put("username", Settings.getUsername());
+		if(!Settings.getUsername().equals("anonymous")) {
+			obj.put("secret", Settings.getSecret());
+		}
+		obj.put("activity", activityObj);
+		log.info("sending activity: " + obj);
+		writeJSON(obj);
+	}
+
+	public void writeJSON(JSONObject obj) {
+		outwriter.println(obj);
 		outwriter.flush();
 	}
 	
@@ -114,19 +127,21 @@ public class ClientSolution extends Thread {
 	public void disconnect(){
 		JSONObject obj = new JSONObject();
 		obj.put("command", "LOGOUT");
-		sendActivityObject(obj);
+		writeJSON(obj);
 
 		if(socket != null) try {
+			in.close();
 			inreader.close();
 			out.close();
+			outwriter.close();
 			socket.close();
-			socket = null;
 		}catch (IOException e){
 			log.error("close:" + e.getMessage());
 		}
 
 		textFrame.setVisible(false);
 		textFrame.dispose();
+		System.exit(0);
 	}
 	
 	
@@ -140,7 +155,6 @@ public class ClientSolution extends Thread {
 			}
 			log.debug("connection closed to "+Settings.socketAddress(socket));
 			disconnect();
-			in.close();
 		} catch (IOException e) {
 			log.error("connection "+Settings.socketAddress(socket)+" closed with exception: "+e);
 			disconnect();
@@ -219,7 +233,9 @@ public class ClientSolution extends Thread {
 
 			case "ACTIVITY_BROADCAST":
 				log.debug("activity: " + obj);
-				textFrame.setOutputText(obj);
+
+				JSONObject activity = (JSONObject) obj.get("activity");
+				textFrame.setOutputText(activity);
 				return false;
 
 			default:
